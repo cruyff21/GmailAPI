@@ -3,10 +3,18 @@ require("dotenv").config();
 const { google } = require("googleapis");
 const fs = require("fs");
 const path = require("path");
-const { salvarState, carregarState, limparZipMantendoSomenteXml } = require("./utils");
+const {
+  salvarState,
+  carregarState,
+  limparZipMantendoSomenteXml,
+  listarXmlsDaPasta,
+  chavePareceValida,
+  extrairChaveDoNomeArquivo,
+  extrairCnpjDaChave,
+} = require("./utils");
+const { buscarEmpresaPorCnpj } = require("./empresaCache");
 
 const DOWNLOAD_DIR = path.join(__dirname, "downloads");
-
 
 if (!fs.existsSync(DOWNLOAD_DIR)) {
   fs.mkdirSync(DOWNLOAD_DIR);
@@ -25,7 +33,6 @@ const gmail = google.gmail({
   version: "v1",
   auth: oauth2Client,
 });
-
 
 function encontrarAnexos(parts, anexos = []) {
   for (const part of parts || []) {
@@ -110,10 +117,7 @@ async function verificarAnexos(messageId) {
   for (const part of anexos) {
     const filename = part.filename.toLowerCase();
 
-    if (
-      filename.endsWith(".xml") ||
-      filename.endsWith(".zip")
-    ) {
+    if (filename.endsWith(".xml") || filename.endsWith(".zip")) {
       await baixarAnexo(messageId, part);
     }
   }
@@ -142,6 +146,60 @@ async function buscarHistorico(historyId) {
   const novoHistoryId = res.data.historyId;
 
   salvarState(novoHistoryId);
+}
+
+async function processarXml(caminhoXml) {
+  try {
+    const chave = extrairChaveDoNomeArquivo(caminhoXml);
+
+    if (!chavePareceValida(chave)) {
+      console.log(
+        `⚠️ Nome do arquivo não parece ser uma chave válida: ${path.basename(caminhoXml)}`,
+      );
+      return;
+    }
+
+    const cnpj = extrairCnpjDaChave(chave);
+
+    if (!cnpj) {
+      console.log(`⚠️ Não foi possível extrair o CNPJ da chave: ${chave}`);
+      return;
+    }
+
+    const resultado = await buscarEmpresaPorCnpj(cnpj);
+
+    if (resultado.status === "NAO_ENCONTRADA") {
+      console.log(
+        `❌ Empresa não encontrada | CNPJ: ${cnpj} | Chave: ${chave}`,
+      );
+      return;
+    }
+
+    if (resultado.status === "INATIVA") {
+      console.log(`⏸️ Empresa inativa | CNPJ: ${cnpj} | Chave: ${chave}`);
+      return;
+    }
+
+    console.log(
+      `✅ Empresa ativa encontrada | CNPJ: ${cnpj} | Chave: ${chave}`,
+    );
+    console.log(resultado.empresa);
+
+    // próximo passo:
+    // mover arquivo, registrar no banco, etc.
+  } catch (error) {
+    console.error(`Erro ao processar XML ${caminhoXml}:`, error.message);
+  }
+}
+
+async function processarXmlsDaPasta() {
+  const arquivosXml = listarXmlsDaPasta(DOWNLOAD_DIR);
+
+  console.log(`📄 XMLs encontrados: ${arquivosXml.length}`);
+
+  for (const caminhoXml of arquivosXml) {
+    await processarXml(caminhoXml);
+  }
 }
 
 async function main() {
@@ -176,6 +234,7 @@ async function main() {
   console.log("HistoryId atual:", state.historyId);
 
   await buscarHistorico(state.historyId);
+  await processarXmlsDaPasta();
 }
 
 main();

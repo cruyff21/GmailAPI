@@ -1,7 +1,7 @@
-# GmailAPI - Download de anexos XML/ZIP com Gmail History API
+# GmailAPI - Monitoramento Gmail + validação de XML (NFe) por CNPJ
 
 ## Visão geral
-Este projeto monitora novos e-mails da conta Gmail usando `historyId` e baixa anexos com extensão `.xml` e `.zip`.
+Este projeto monitora novos e-mails da conta Gmail usando `historyId`, baixa anexos com extensão `.xml` e `.zip`, e processa XMLs de NFe para validar empresa ativa por CNPJ.
 
 Quando encontra um arquivo `.zip`, ele:
 - abre o ZIP;
@@ -10,6 +10,12 @@ Quando encontra um arquivo `.zip`, ele:
 - descarta o ZIP inteiro caso não exista XML dentro.
 
 O estado de processamento é salvo em `history_state.json`, permitindo continuar da última execução.
+
+Além disso, após buscar novos anexos, os XMLs da pasta `downloads/` são processados para:
+- extrair a chave de acesso (44 dígitos) do nome do arquivo;
+- extrair o CNPJ da chave;
+- consultar empresa no cache (JSON/memória) e, se necessário, no PostgreSQL;
+- identificar se a empresa está ativa, inativa ou não encontrada.
 
 ---
 
@@ -59,13 +65,34 @@ flowchart TD
    - localiza anexos de forma recursiva (`payload.parts`);
    - baixa apenas `.xml` ou `.zip` para a pasta `downloads/`.
 5. Se o anexo for ZIP, limpa o conteúdo mantendo apenas XML.
-6. Ao final, salva o novo `historyId`.
+6. Salva o novo `historyId`.
+7. Processa todos os XMLs em `downloads/`:
+   - extrai chave e CNPJ a partir do nome do arquivo;
+   - valida formato da chave;
+   - consulta cache de empresas (`empresas_cache.json` + memória);
+   - em cache miss, consulta `dbo.empresas_tbl` no banco;
+   - registra no log se empresa está `ATIVA`, `INATIVA` ou `NAO_ENCONTRADA`.
+
+---
+
+## Atualizações recentes
+- Integração de validação de XML por chave de acesso da NFe.
+- Extração de CNPJ direto da chave (posições 7 a 20 da chave de 44 dígitos).
+- Implementação de cache híbrido de empresas:
+  - memória (`cacheMemoria`);
+  - arquivo local `empresas_cache.json`;
+  - recarga automática do PostgreSQL quando cache expira.
+- Fallback de consulta no banco para CNPJ não encontrado no cache.
+- Inclusão de token de integração (`integration_api_token`) no objeto de empresa retornado.
 
 ---
 
 ## Estrutura principal
-- `main.js`: fluxo principal (Gmail API, histórico, download e filtro de anexos).
-- `utils.js`: persistência de estado e limpeza de arquivos ZIP.
+- `main.js`: fluxo principal (Gmail API, histórico, download, limpeza de ZIP e processamento de XML).
+- `utils.js`: persistência de estado, limpeza de ZIP e utilitários de chave/CNPJ.
+- `empresaCache.js`: gerenciamento de cache de empresas e consulta por CNPJ.
+- `db.js`: conexão PostgreSQL e executor de queries.
+- `empresas_cache.json`: snapshot do cache de empresas (persistência local).
 - `history_state.json`: último `historyId` + data da última execução.
 - `downloads/`: pasta onde os anexos são salvos.
 - `testes/`: scripts auxiliares de teste.
@@ -76,6 +103,7 @@ flowchart TD
 - Node.js 18+ (recomendado).
 - Projeto OAuth2 no Google Cloud com Gmail API habilitada.
 - `refresh_token` válido da conta Gmail.
+- PostgreSQL acessível com tabela `dbo.empresas_tbl`.
 
 ---
 
@@ -83,7 +111,7 @@ flowchart TD
 No diretório do projeto:
 
 ```bash
-npm install googleapis dotenv adm-zip
+npm install googleapis dotenv adm-zip pg
 ```
 
 > Se ainda não existir `package.json`, rode antes:
@@ -101,6 +129,12 @@ Crie um arquivo `.env` na raiz do projeto com:
 CLIENT_ID=seu_client_id
 CLIENT_SECRET=seu_client_secret
 REFRESH_TOKEN=seu_refresh_token
+
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=seu_banco
+DB_USER=postgres
+DB_PASSWORD=sua_senha
 ```
 
 ### Escopo necessário
@@ -132,6 +166,17 @@ node main.js
 
 ---
 
+## Regras de processamento de XML
+- A chave da NFe é extraída do nome do arquivo via regex (`\d{44}`).
+- Arquivo sem chave válida é ignorado com log de aviso.
+- O CNPJ é extraído da chave e consultado no cache/banco.
+- Resultados possíveis:
+  - `ATIVA`: empresa encontrada e ativa;
+  - `INATIVA`: empresa encontrada, porém inativa;
+  - `NAO_ENCONTRADA`: empresa não localizada no banco.
+
+---
+
 ## Logs esperados
 Exemplos de logs durante a execução:
 - `HistoryId atual: ...`
@@ -139,6 +184,12 @@ Exemplos de logs durante a execução:
 - `Arquivo salvo: ...`
 - `Zip descartado (sem XML)`
 - `Zip substituído pelo limpo`
+- `📄 XMLs encontrados: ...`
+- `✅ Empresa ativa encontrada | CNPJ: ... | Chave: ...`
+- `⏸️ Empresa inativa | CNPJ: ... | Chave: ...`
+- `❌ Empresa não encontrada | CNPJ: ... | Chave: ...`
+- `📦 Cache carregado do JSON`
+- `🔄 Cache ausente ou expirado. Recarregando do banco...`
 
 ---
 
@@ -153,10 +204,19 @@ Exemplos de logs durante a execução:
 - **Erro de permissão na pasta `downloads/`**
   - Verifique permissões de escrita no diretório do projeto.
 
+- **Erro de conexão com PostgreSQL**
+  - Revise variáveis `DB_*` no `.env`.
+  - Valide se o banco está ativo e acessível.
+
+- **Empresa sempre não encontrada**
+  - Confirme se o CNPJ extraído existe em `dbo.empresas_tbl`.
+  - Verifique se o campo `cnpj` no banco contém o mesmo formato esperado.
+
 ---
 
 ## Próximas melhorias sugeridas
 - Rodar em intervalo automático (cron/agendador).
 - Filtrar por remetente/assunto antes de baixar anexos.
 - Evitar sobrescrita quando anexos tiverem mesmo nome.
-- Adicionar testes automatizados para `utils.js`.
+- Mover XMLs processados para pasta de sucesso/erro.
+- Adicionar testes automatizados para `utils.js` e `empresaCache.js`.

@@ -1,2 +1,4 @@
 .env
 history_state.json
+empresas_cache.json
+downloads/

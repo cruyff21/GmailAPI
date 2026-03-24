@@ -81,4 +81,37 @@ function limparZipMantendoSomenteXml(zipPath) {
   };
 }
 
-module.exports = { salvarState, carregarState, limparZipMantendoSomenteXml };
+function listarXmlsDaPasta(dir) {
+  return fs
+    .readdirSync(dir)
+    .filter((arquivo) => arquivo.toLowerCase().endsWith(".xml"))
+    .map((arquivo) => path.join(dir, arquivo));
+}
+
+function extrairChaveDoNomeArquivo(caminhoArquivo) {
+  const nomeArquivo = path.basename(caminhoArquivo);
+  const match = nomeArquivo.match(/\d{44}/);
+  return match ? match[0] : null;
+}
+
+function chavePareceValida(chave) {
+  return /^\d{44}$/.test(chave);
+}
+
+function extrairCnpjDaChave(chave) {
+  if (!chavePareceValida(chave)) {
+    return null;
+  }
+
+  return chave.substring(6, 20);
+}
+
+module.exports = { 
+    salvarState, 
+    carregarState, 
+    limparZipMantendoSomenteXml,
+    listarXmlsDaPasta,
+    chavePareceValida,
+    extrairChaveDoNomeArquivo,
+    extrairCnpjDaChave,
+ };
