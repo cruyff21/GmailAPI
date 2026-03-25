@@ -32,29 +32,54 @@ flowchart TD
   C -- Sim --> H[Chama Gmail History API]
   H --> I{Há messagesAdded?}
   I -- Não --> J[Salva novo historyId]
-  J --> G
+  J --> K[Lista XMLs em downloads/]
 
-  I -- Sim --> K[Para cada nova mensagem]
-  K --> L[Lê assunto e remetente]
-  L --> M[Encontra anexos recursivamente]
-  M --> N{Anexo é .xml ou .zip?}
-  N -- Não --> O[Ignora anexo]
-  O --> P{Ainda há anexos?}
+  I -- Sim --> L[Para cada nova mensagem]
+  L --> M[Lê assunto e remetente]
+  M --> N[Encontra anexos recursivamente]
+  N --> O{Anexo é .xml ou .zip?}
+  O -- Não --> P[Ignora anexo]
+  P --> Q{Ainda há anexos?}
 
-  N -- Sim --> Q[Baixa anexo em downloads/]
-  Q --> R{É .zip?}
-  R -- Não --> P
-  R -- Sim --> S[Limpa ZIP mantendo somente XML]
-  S --> T{ZIP possui XML?}
-  T -- Não --> U[Remove ZIP]
-  U --> P
-  T -- Sim --> V[Substitui ZIP pelo limpo]
-  V --> P
+  O -- Sim --> R[Baixa anexo em downloads/]
+  R --> S{É .zip?}
+  S -- Não --> Q
+  S -- Sim --> T[Limpa ZIP mantendo somente XML]
+  T --> U{ZIP possui XML?}
+  U -- Não --> V[Remove ZIP]
+  V --> Q
+  U -- Sim --> W[Substitui ZIP pelo limpo]
+  W --> Q
 
-  P -- Sim --> N
-  P -- Não --> W{Há mais mensagens?}
-  W -- Sim --> K
-  W -- Não --> J
+  Q -- Sim --> O
+  Q -- Não --> X{Há mais mensagens?}
+  X -- Sim --> L
+  X -- Não --> J
+
+  K --> Y{Há XML para processar?}
+  Y -- Não --> G
+  Y -- Sim --> Z[Para cada XML]
+  Z --> AA[Extrai chave do nome do arquivo]
+  AA --> AB{Chave válida?}
+  AB -- Não --> AC[Ignora arquivo e registra aviso]
+  AC --> AD{Ainda há XML?}
+  AB -- Sim --> AE[Extrai CNPJ da chave]
+  AE --> AF[Busca empresa no cache]
+  AF --> AG{Encontrou no cache?}
+  AG -- Sim --> AH[Retorna status ATIVA]
+  AG -- Não --> AI[Consulta PostgreSQL por CNPJ]
+  AI --> AJ{Empresa existe?}
+  AJ -- Não --> AK[Status NAO_ENCONTRADA]
+  AJ -- Sim --> AL{Empresa ativa?}
+  AL -- Não --> AM[Status INATIVA]
+  AL -- Sim --> AN[Adiciona ao cache e status ATIVA]
+
+  AH --> AD
+  AK --> AD
+  AM --> AD
+  AN --> AD
+  AD -- Sim --> Z
+  AD -- Não --> G
 ```
 
 1. Carrega `history_state.json`.
