@@ -7,10 +7,13 @@ const {
   salvarState,
   carregarState,
   limparZipMantendoSomenteXml,
-  listarXmlsDaPasta,
+  listarArquivosProcessaveis,
   chavePareceValida,
   extrairChaveDoNomeArquivo,
   extrairCnpjDaChave,
+  enviarArquivoParaApi,
+  agruparXmlsDoZipPorEmpresa,
+  criarZipPorEmpresa
 } = require("./utils");
 const { buscarEmpresaPorCnpj } = require("./empresaCache");
 
@@ -175,66 +178,178 @@ async function processarXml(caminhoXml) {
       return;
     }
 
-    if (resultado.status === "INATIVA") {
-      console.log(`⏸️ Empresa inativa | CNPJ: ${cnpj} | Chave: ${chave}`);
+    const empresa = resultado.empresa;
+
+    if (!empresa.integration_api_token) {
+      console.log(
+        `⚠️ Empresa sem token | CNPJ: ${cnpj} | id_empresa: ${empresa.id_empresa}`,
+      );
       return;
     }
 
-    console.log(
-      `✅ Empresa ativa encontrada | CNPJ: ${cnpj} | Chave: ${chave}`,
-    );
-    console.log(resultado.empresa);
+    console.log(`✅ Empresa encontrada | CNPJ: ${cnpj} | Chave: ${chave}`);
+    //console.log(empresa);
 
-    // próximo passo:
-    // mover arquivo, registrar no banco, etc.
+    const retornoApi = await enviarArquivoParaApi(
+      caminhoXml,
+      empresa.integration_api_token,
+    );
+
+    console.log(
+      `🚀 XML enviado com sucesso | Arquivo: ${path.basename(caminhoXml)}`,
+    );
+    console.log(retornoApi);
+
+    // Deletar arquivo após upload bem-sucedido
+    fs.unlinkSync(caminhoXml);
+    console.log(`🗑️ Arquivo removido: ${path.basename(caminhoXml)}`);
   } catch (error) {
     console.error(`Erro ao processar XML ${caminhoXml}:`, error.message);
+
+    if (error.response) {
+      console.error("Status da API:", error.response.status);
+      console.error("Resposta da API:", error.response.data);
+    }
   }
 }
 
-async function processarXmlsDaPasta() {
-  const arquivosXml = listarXmlsDaPasta(DOWNLOAD_DIR);
+async function processarZip(caminhoZip) {
+  try {
+    const grupos = await agruparXmlsDoZipPorEmpresa(caminhoZip);
+    const listaGrupos = Object.values(grupos);
 
-  console.log(`📄 XMLs encontrados: ${arquivosXml.length}`);
+    if (listaGrupos.length === 0) {
+      console.log(`Nenhum XML válido encontrado em ${path.basename(caminhoZip)}`);
+      return;
+    }
 
-  for (const caminhoXml of arquivosXml) {
-    await processarXml(caminhoXml);
+    if (listaGrupos.length === 1) {
+      const grupo = listaGrupos[0];
+      const empresa = grupo.empresa;
+
+      if (!empresa.integration_api_token) {
+        console.log(`Empresa sem token | id_empresa: ${empresa.id_empresa}`);
+        return;
+      }
+
+      const retornoApi = await enviarArquivoParaApi(
+        caminhoZip,
+        empresa.integration_api_token
+      );
+
+      console.log(`ZIP original enviado: ${path.basename(caminhoZip)}`);
+      console.log(retornoApi);
+
+      // Deletar ZIP original após upload bem-sucedido
+      fs.unlinkSync(caminhoZip);
+      console.log(`🗑️ ZIP removido: ${path.basename(caminhoZip)}`);
+      return;
+    }
+
+    const pastaTemp = path.join(__dirname, "temp_zips");
+    if (!fs.existsSync(pastaTemp)) {
+      fs.mkdirSync(pastaTemp, { recursive: true });
+    }
+
+    const nomeBase = path.basename(caminhoZip, path.extname(caminhoZip));
+
+    for (const grupo of listaGrupos) {
+      const empresa = grupo.empresa;
+
+      if (!empresa.integration_api_token) {
+        console.log(`Empresa sem token | id_empresa: ${empresa.id_empresa}`);
+        continue;
+      }
+
+      const zipSeparado = criarZipPorEmpresa(
+        nomeBase,
+        empresa,
+        grupo.xmls,
+        pastaTemp
+      );
+
+      const retornoApi = await enviarArquivoParaApi(
+        zipSeparado,
+        empresa.integration_api_token
+      );
+
+      console.log(`ZIP separado enviado: ${path.basename(zipSeparado)}`);
+      console.log(retornoApi);
+
+      // Deletar ZIP separado após upload bem-sucedido
+      fs.unlinkSync(zipSeparado);
+      console.log(`🗑️ ZIP temporário removido: ${path.basename(zipSeparado)}`);
+    }
+
+    // Deletar ZIP original após processar todos os grupos
+    fs.unlinkSync(caminhoZip);
+    console.log(`🗑️ ZIP original removido: ${path.basename(caminhoZip)}`);
+
+    // Limpar pasta temp_zips se estiver vazia
+    if (fs.readdirSync(pastaTemp).length === 0) {
+      fs.rmdirSync(pastaTemp);
+      console.log(`🗑️ Pasta temp_zips removida (vazia)`);
+    }
+  } catch (error) {
+    console.error(`Erro ao processar ZIP ${caminhoZip}:`, error.message);
+  }
+}
+
+async function processarArquivosDaPasta() {
+  const arquivos = listarArquivosProcessaveis(DOWNLOAD_DIR);
+
+  console.log(`📦 Arquivos encontrados: ${arquivos.length}`);
+
+  for (const caminhoArquivo of arquivos) {
+    const lower = caminhoArquivo.toLowerCase();
+
+    if (lower.endsWith(".xml")) {
+      await processarXml(caminhoArquivo);
+      continue;
+    }
+
+    if (lower.endsWith(".zip")) {
+      await processarZip(caminhoArquivo);
+      continue;
+    }
+
+    console.log(`⚠️ Arquivo ignorado: ${path.basename(caminhoArquivo)}`);
   }
 }
 
 async function main() {
-  const state = carregarState();
+  // const state = carregarState();
 
-  if (!state.historyId) {
-    console.log(
-      "Nenhum historyId encontrado. Pegando inicial a partir da inbox...",
-    );
+  // if (!state.historyId) {
+  //   console.log(
+  //     "Nenhum historyId encontrado. Pegando inicial a partir da inbox...",
+  //   );
 
-    const list = await gmail.users.messages.list({
-      userId: "me",
-      maxResults: 1,
-    });
+  //   const list = await gmail.users.messages.list({
+  //     userId: "me",
+  //     maxResults: 1,
+  //   });
 
-    const messageId = list.data.messages[0].id;
+  //   const messageId = list.data.messages[0].id;
 
-    const email = await gmail.users.messages.get({
-      userId: "me",
-      id: messageId,
-    });
+  //   const email = await gmail.users.messages.get({
+  //     userId: "me",
+  //     id: messageId,
+  //   });
 
-    const historyId = email.data.historyId;
+  //   const historyId = email.data.historyId;
 
-    salvarState(historyId);
+  //   salvarState(historyId);
 
-    console.log("HistoryId inicial salvo:", historyId);
+  //   console.log("HistoryId inicial salvo:", historyId);
 
-    return;
-  }
+  //   return;
+  // }
 
-  console.log("HistoryId atual:", state.historyId);
+  // console.log("HistoryId atual:", state.historyId);
 
-  await buscarHistorico(state.historyId);
-  await processarXmlsDaPasta();
+  // await buscarHistorico(state.historyId);
+  await processarArquivosDaPasta();
 }
 
 main();

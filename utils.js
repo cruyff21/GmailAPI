@@ -1,6 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 const AdmZip = require("adm-zip");
+const axios = require("axios");
+const FormData = require("form-data");
+
+const { buscarEmpresaPorCnpj } = require('./empresaCache')
 
 const STATE_FILE = path.join(__dirname, "history_state.json");
 
@@ -81,10 +85,13 @@ function limparZipMantendoSomenteXml(zipPath) {
   };
 }
 
-function listarXmlsDaPasta(dir) {
+function listarArquivosProcessaveis(dir) {
   return fs
     .readdirSync(dir)
-    .filter((arquivo) => arquivo.toLowerCase().endsWith(".xml"))
+    .filter((arquivo) => {
+      const lower = arquivo.toLowerCase();
+      return lower.endsWith(".xml") || lower.endsWith(".zip");
+    })
     .map((arquivo) => path.join(dir, arquivo));
 }
 
@@ -106,12 +113,130 @@ function extrairCnpjDaChave(chave) {
   return chave.substring(6, 20);
 }
 
-module.exports = { 
-    salvarState, 
-    carregarState, 
-    limparZipMantendoSomenteXml,
-    listarXmlsDaPasta,
-    chavePareceValida,
-    extrairChaveDoNomeArquivo,
-    extrairCnpjDaChave,
- };
+async function identificarEmpresaDoXmlInterno(nomeXmlInterno) {
+  const chave = extrairChaveDoNomeArquivo(nomeXmlInterno);
+
+  if (!chavePareceValida(chave)) {
+    return {
+      status: "CHAVE_INVALIDA",
+      empresa: null,
+      chave: null,
+      cnpj: null,
+    };
+  }
+
+  const cnpj = extrairCnpjDaChave(chave);
+
+  if (!cnpj) {
+    return {
+      status: "CNPJ_INVALIDO",
+      empresa: null,
+      chave,
+      cnpj: null,
+    };
+  }
+
+  const resultado = await buscarEmpresaPorCnpj(cnpj);
+
+  if (resultado.status === "NAO_ENCONTRADA") {
+    return {
+      status: "NAO_ENCONTRADA",
+      empresa: null,
+      chave,
+      cnpj,
+    };
+  }
+
+  return {
+    status: "OK",
+    empresa: resultado.empresa,
+    chave,
+    cnpj,
+  };
+}
+
+async function agruparXmlsDoZipPorEmpresa(caminhoZip) {
+  const zip = new AdmZip(caminhoZip);
+  const entries = zip.getEntries();
+
+  const grupos = {};
+
+  for (const entry of entries) {
+    if (entry.isDirectory) continue;
+    if (!entry.entryName.toLowerCase().endsWith(".xml")) continue;
+
+    const resultado = await identificarEmpresaDoXmlInterno(entry.entryName);
+
+    if (resultado.status !== "OK") {
+      continue;
+    }
+
+    const empresa = resultado.empresa;
+    const chaveGrupo = String(empresa.id_empresa);
+
+    if (!grupos[chaveGrupo]) {
+      grupos[chaveGrupo] = {
+        empresa,
+        xmls: [],
+      };
+    }
+
+    grupos[chaveGrupo].xmls.push({
+      nome: entry.entryName,
+      buffer: entry.getData(),
+    });
+  }
+
+  return grupos;
+}
+
+function criarZipPorEmpresa(nomeBase, empresa, xmls, pastaSaida) {
+  const zip = new AdmZip();
+
+  for (const xml of xmls) {
+    zip.addFile(xml.nome, xml.buffer);
+  }
+
+  const caminhoZip = path.join(
+    pastaSaida,
+    `${nomeBase}_empresa_${empresa.id_empresa}.zip`,
+  );
+
+  zip.writeZip(caminhoZip);
+
+  return caminhoZip;
+}
+
+async function enviarArquivoParaApi(caminhoXml, token) {
+  const form = new FormData();
+  form.append(
+    "file",
+    fs.createReadStream(caminhoXml),
+    path.basename(caminhoXml),
+  );
+
+  const response = await axios.post("http://localhost:3000/upload", form, {
+    headers: {
+      ...form.getHeaders(),
+      Authorization: `Bearer ${token}`,
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    timeout: 30000,
+  });
+
+  return response.data;
+}
+
+module.exports = {
+  salvarState,
+  carregarState,
+  limparZipMantendoSomenteXml,
+  listarArquivosProcessaveis,
+  chavePareceValida,
+  agruparXmlsDoZipPorEmpresa,
+  extrairChaveDoNomeArquivo,
+  extrairCnpjDaChave,
+  enviarArquivoParaApi,
+  criarZipPorEmpresa,
+};
