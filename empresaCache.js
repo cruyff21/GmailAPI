@@ -3,7 +3,7 @@ const path = require("path");
 const { query } = require("./db");
 
 const CACHE_FILE = path.join(__dirname, "empresas_cache.json");
-const CACHE_TTL_MS = 20 * 1000; // 10 min
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 min
 
 let cacheMemoria = null;
 

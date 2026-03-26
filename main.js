@@ -318,37 +318,37 @@ async function processarArquivosDaPasta() {
 }
 
 async function main() {
-  // const state = carregarState();
+   const state = carregarState();
 
-  // if (!state.historyId) {
-  //   console.log(
-  //     "Nenhum historyId encontrado. Pegando inicial a partir da inbox...",
-  //   );
+   if (!state.historyId) {
+     console.log(
+       "Nenhum historyId encontrado. Pegando inicial a partir da inbox...",
+     );
 
-  //   const list = await gmail.users.messages.list({
-  //     userId: "me",
-  //     maxResults: 1,
-  //   });
+     const list = await gmail.users.messages.list({
+       userId: "me",
+       maxResults: 1,
+     });
 
-  //   const messageId = list.data.messages[0].id;
+   const messageId = list.data.messages[0].id;
 
-  //   const email = await gmail.users.messages.get({
-  //     userId: "me",
-  //     id: messageId,
-  //   });
+    const email = await gmail.users.messages.get({
+      userId: "me",
+       id: messageId,
+   });
 
-  //   const historyId = email.data.historyId;
+     const historyId = email.data.historyId;
 
-  //   salvarState(historyId);
+    salvarState(historyId);
 
-  //   console.log("HistoryId inicial salvo:", historyId);
+    console.log("HistoryId inicial salvo:", historyId);
 
-  //   return;
-  // }
+     return;
+  }
 
-  // console.log("HistoryId atual:", state.historyId);
+  console.log("HistoryId atual:", state.historyId);
 
-  // await buscarHistorico(state.historyId);
+  await buscarHistorico(state.historyId);
   await processarArquivosDaPasta();
 }
 

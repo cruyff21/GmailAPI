@@ -215,7 +215,7 @@ async function enviarArquivoParaApi(caminhoXml, token) {
     path.basename(caminhoXml),
   );
 
-  const response = await axios.post("http://localhost:3000/upload", form, {
+  const response = await axios.post("https://service.robotax.com.br/integrations/upload-xml", form, {
     headers: {
       ...form.getHeaders(),
       Authorization: `Bearer ${token}`,
