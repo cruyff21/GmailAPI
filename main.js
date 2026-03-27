@@ -13,7 +13,7 @@ const {
   extrairCnpjDaChave,
   enviarArquivoParaApi,
   agruparXmlsDoZipPorEmpresa,
-  criarZipPorEmpresa
+  criarZipPorEmpresa,
 } = require("./utils");
 const { buscarEmpresaPorCnpj } = require("./empresaCache");
 
@@ -219,7 +219,9 @@ async function processarZip(caminhoZip) {
     const listaGrupos = Object.values(grupos);
 
     if (listaGrupos.length === 0) {
-      console.log(`Nenhum XML válido encontrado em ${path.basename(caminhoZip)}`);
+      console.log(
+        `Nenhum XML válido encontrado em ${path.basename(caminhoZip)}`,
+      );
       return;
     }
 
@@ -232,17 +234,39 @@ async function processarZip(caminhoZip) {
         return;
       }
 
-      const retornoApi = await enviarArquivoParaApi(
-        caminhoZip,
-        empresa.integration_api_token
+      const pastaTemp = path.join(__dirname, "temp_zips");
+      if (!fs.existsSync(pastaTemp)) {
+        fs.mkdirSync(pastaTemp, { recursive: true });
+      }
+
+      const nomeBase = path.basename(caminhoZip, path.extname(caminhoZip));
+
+      const zipSeparado = criarZipPorEmpresa(
+        nomeBase,
+        empresa,
+        grupo.xmls,
+        pastaTemp,
       );
 
-      console.log(`ZIP original enviado: ${path.basename(caminhoZip)}`);
+      const retornoApi = await enviarArquivoParaApi(
+        zipSeparado,
+        empresa.integration_api_token,
+      );
+
+      console.log(`ZIP recriado enviado: ${path.basename(zipSeparado)}`);
       console.log(retornoApi);
 
-      // Deletar ZIP original após upload bem-sucedido
+      fs.unlinkSync(zipSeparado);
+      console.log(`🗑️ ZIP temporário removido: ${path.basename(zipSeparado)}`);
+
       fs.unlinkSync(caminhoZip);
-      console.log(`🗑️ ZIP removido: ${path.basename(caminhoZip)}`);
+      console.log(`🗑️ ZIP original removido: ${path.basename(caminhoZip)}`);
+
+      if (fs.existsSync(pastaTemp) && fs.readdirSync(pastaTemp).length === 0) {
+        fs.rmdirSync(pastaTemp);
+        console.log(`🗑️ Pasta temp_zips removida (vazia)`);
+      }
+
       return;
     }
 
@@ -265,12 +289,12 @@ async function processarZip(caminhoZip) {
         nomeBase,
         empresa,
         grupo.xmls,
-        pastaTemp
+        pastaTemp,
       );
 
       const retornoApi = await enviarArquivoParaApi(
         zipSeparado,
-        empresa.integration_api_token
+        empresa.integration_api_token,
       );
 
       console.log(`ZIP separado enviado: ${path.basename(zipSeparado)}`);
@@ -318,36 +342,29 @@ async function processarArquivosDaPasta() {
 }
 
 async function main() {
-   const state = carregarState();
+  const state = carregarState();
+  if (!state.historyId) {
+    console.log(
+      "Nenhum historyId encontrado. Pegando inicial a partir da inbox...",
+    );
+    const list = await gmail.users.messages.list({
+      userId: "me",
+      maxResults: 1,
+    });
 
-   if (!state.historyId) {
-     console.log(
-       "Nenhum historyId encontrado. Pegando inicial a partir da inbox...",
-     );
-
-     const list = await gmail.users.messages.list({
-       userId: "me",
-       maxResults: 1,
-     });
-
-   const messageId = list.data.messages[0].id;
-
+    const messageId = list.data.messages[0].id;
     const email = await gmail.users.messages.get({
       userId: "me",
-       id: messageId,
-   });
-
-     const historyId = email.data.historyId;
+      id: messageId,
+    });
+    const historyId = email.data.historyId;
 
     salvarState(historyId);
 
     console.log("HistoryId inicial salvo:", historyId);
-
-     return;
+    return;
   }
-
   console.log("HistoryId atual:", state.historyId);
-
   await buscarHistorico(state.historyId);
   await processarArquivosDaPasta();
 }

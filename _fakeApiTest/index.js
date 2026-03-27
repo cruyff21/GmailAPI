@@ -9,7 +9,7 @@ const path = require("path");
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = 3012;
 const JWT_SECRET = 'ttkaaaaaaaaaaa';
 
 const uploadDir = path.join(__dirname, "uploads");

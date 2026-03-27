@@ -54,8 +54,9 @@ function limparZipMantendoSomenteXml(zipPath) {
     }
 
     const buffer = entry.getData();
+    const nomeArquivoApenas = path.basename(nomeInterno); // ✅ Extrai só o nome
 
-    zipLimpo.addFile(nomeInterno, buffer);
+    zipLimpo.addFile(nomeArquivoApenas, buffer); // ✅ Sem pastas
     totalXml++;
   }
 
@@ -165,7 +166,9 @@ async function agruparXmlsDoZipPorEmpresa(caminhoZip) {
     if (entry.isDirectory) continue;
     if (!entry.entryName.toLowerCase().endsWith(".xml")) continue;
 
-    const resultado = await identificarEmpresaDoXmlInterno(entry.entryName);
+    const nomeXml = path.basename(entry.entryName);
+
+    const resultado = await identificarEmpresaDoXmlInterno(nomeXml);
 
     if (resultado.status !== "OK") {
       continue;
@@ -182,7 +185,7 @@ async function agruparXmlsDoZipPorEmpresa(caminhoZip) {
     }
 
     grupos[chaveGrupo].xmls.push({
-      nome: entry.entryName,
+      nome: nomeXml,
       buffer: entry.getData(),
     });
   }
